@@ -1,0 +1,4 @@
+body { font-family: system-ui, sans-serif; margin: 2rem; }
+.todo-app li.completed [data-testid='todo-title'] { text-decoration: line-through; opacity: .6; }
+.todo-app .error { color: #b00020; }
+.todo-app nav button.active { font-weight: bold; }

@@ -1,0 +1,919 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>body { margin: 0; } img { max-width: 100%; } [hidden] { display: none !important; }</style>
+<title>Anatomy of a Playwright Test</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a reading column for the concepts, widening to a two-pane "trace viewer" for the step-through.
+   Each of the six layers keeps one colour everywhere it appears. */
+:root {
+  --bg: #f5f6f9;
+  --surface: #ffffff;
+  --sunken: #eef0f5;
+  --fg: #1a1f29;
+  --muted: #5a6373;
+  --line: #dce0e8;
+  --focus: #2f5bd3;
+
+  --l-config: #5f6878;
+  --l-spec: #2f5bd3;
+  --l-fixture: #7a4cc2;
+  --l-page: #b45d06;
+  --l-mock: #0d8277;
+  --l-app: #c03558;
+
+  --tint: 10%;
+  --hl-bg: #fff6d6;
+  --hl-bar: #e0a400;
+  --tok-key: #7a4cc2;
+  --tok-str: #0d7a52;
+  --tok-com: #8b93a2;
+  --tok-num: #b45d06;
+  --pass: #138a4a;
+
+  --f-display: "Bricolage Grotesque", "IBM Plex Sans", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11141a; --surface: #191d25; --sunken: #151920; --fg: #e5e8ee; --muted: #9aa3b3; --line: #2b313c; --focus: #7d9cf0;
+    --l-config: #9aa3b3; --l-spec: #7d9cf0; --l-fixture: #b294ea; --l-page: #f0a050; --l-mock: #4cc7b8; --l-app: #f07a96;
+    --tint: 16%; --hl-bg: #3a3215; --hl-bar: #e8b730;
+    --tok-key: #c4a6f5; --tok-str: #7fd6a4; --tok-com: #6d7686; --tok-num: #f0a050; --pass: #54cf87;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11141a; --surface: #191d25; --sunken: #151920; --fg: #e5e8ee; --muted: #9aa3b3; --line: #2b313c; --focus: #7d9cf0;
+  --l-config: #9aa3b3; --l-spec: #7d9cf0; --l-fixture: #b294ea; --l-page: #f0a050; --l-mock: #4cc7b8; --l-app: #f07a96;
+  --tint: 16%; --hl-bg: #3a3215; --hl-bar: #e8b730;
+  --tok-key: #c4a6f5; --tok-str: #7fd6a4; --tok-com: #6d7686; --tok-num: #f0a050; --pass: #54cf87;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--f-body); font-size: 16px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 72px; }
+.col { max-width: 760px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2rem, 5vw, 3.1rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: clamp(1.5rem, 3vw, 2rem); font-weight: 700; letter-spacing: -0.01em; }
+h3 { font-size: 1.15rem; font-weight: 500; }
+p { margin: 0; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.15rem; color: var(--muted); max-width: 62ch; }
+section { display: flex; flex-direction: column; gap: 20px; }
+section > header { display: flex; flex-direction: column; gap: 8px; }
+.prose { display: flex; flex-direction: column; gap: 14px; max-width: 68ch; }
+code, .mono { font-family: var(--f-mono); font-size: 0.88em; }
+:not(pre) > code { background: var(--sunken); border: 1px solid var(--line); border-radius: 4px; padding: 0.05em 0.35em; }
+a { color: var(--focus); }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* layer colour helpers */
+[data-layer="config"]  { --c: var(--l-config); }
+[data-layer="spec"]    { --c: var(--l-spec); }
+[data-layer="fixture"] { --c: var(--l-fixture); }
+[data-layer="page"]    { --c: var(--l-page); }
+[data-layer="mock"]    { --c: var(--l-mock); }
+[data-layer="app"]     { --c: var(--l-app); }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--f-mono); font-size: 0.75rem; font-weight: 600;
+  color: var(--c); background: color-mix(in srgb, var(--c) var(--tint), transparent);
+  border: 1px solid color-mix(in srgb, var(--c) 35%, transparent);
+  padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+}
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+
+/* ---------- Hero ---------- */
+.hero { display: flex; flex-direction: column; gap: 18px; }
+.hero .testname {
+  font-family: var(--f-mono); font-size: 0.95rem; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 14px; overflow-x: auto; white-space: nowrap; max-width: 100%;
+}
+.testname .kw { color: var(--tok-key); } .testname .str { color: var(--tok-str); }
+
+/* ---------- Standard? table ---------- */
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 0.95rem; }
+th, td { text-align: left; vertical-align: top; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); font-weight: 600; background: var(--sunken); }
+.status { font-family: var(--f-mono); font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+.status.req { color: var(--l-app); } .status.feat { color: var(--l-spec); } .status.conv { color: var(--muted); }
+
+/* ---------- Layer map ---------- */
+.layers { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 24px; align-items: start; }
+.stack { display: flex; flex-direction: column; gap: 6px; }
+.layer-btn {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; text-align: left;
+  background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--c);
+  border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: background .15s, border-color .15s;
+}
+.layer-btn:hover { background: color-mix(in srgb, var(--c) 6%, var(--surface)); }
+.layer-btn[aria-pressed="true"] { background: color-mix(in srgb, var(--c) var(--tint), var(--surface)); border-color: var(--c); }
+.layer-btn b { font-family: var(--f-display); font-weight: 500; font-size: 1.05rem; }
+.layer-btn .path { font-family: var(--f-mono); font-size: 0.75rem; color: var(--muted); grid-column: 1; }
+.layer-btn .arrow { grid-row: 1 / span 2; grid-column: 2; font-family: var(--f-mono); font-size: 0.75rem; color: var(--muted); }
+.stack .down { text-align: center; font-family: var(--f-mono); font-size: 0.72rem; color: var(--muted); line-height: 1; }
+.layer-detail {
+  background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--c);
+  border-radius: 10px; padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; position: sticky; top: 16px;
+}
+.layer-detail dl { margin: 0; display: grid; grid-template-columns: 9.5em 1fr; gap: 8px 14px; font-size: 0.95rem; }
+.layer-detail dt { font-family: var(--f-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); padding-top: 3px; }
+.layer-detail dd { margin: 0; min-width: 0; }
+
+/* ---------- Stepper ---------- */
+.stepper { display: flex; flex-direction: column; gap: 16px; }
+.controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+.dots { display: flex; flex-wrap: wrap; gap: 4px; }
+.dot {
+  width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface);
+  font-family: var(--f-mono); font-size: 0.75rem; cursor: pointer; display: grid; place-items: center; color: var(--muted);
+  position: relative;
+}
+.dot::after { content: ""; position: absolute; left: 5px; right: 5px; bottom: 3px; height: 3px; border-radius: 2px; background: var(--c); opacity: .55; }
+.dot.done { color: var(--fg); }
+.dot[aria-current="step"] { background: var(--c); border-color: var(--c); color: var(--surface); font-weight: 600; }
+.dot[aria-current="step"]::after { background: var(--surface); opacity: .8; }
+.nav { display: flex; gap: 8px; }
+.nav button {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 8px 16px; cursor: pointer; font-weight: 500;
+}
+.nav button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.nav button:disabled { opacity: .4; cursor: default; }
+.step-head { display: flex; flex-direction: column; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 10px; padding: 18px 20px; }
+.step-head .meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.step-head .count { font-family: var(--f-mono); font-size: 0.78rem; color: var(--muted); }
+.step-head h3 { font-size: 1.35rem; font-weight: 700; }
+.step-body { display: flex; flex-direction: column; gap: 10px; max-width: 75ch; }
+.step-body p { color: var(--fg); }
+.step-body .aside { color: var(--muted); font-size: 0.93rem; }
+
+.panes { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.panes > * { min-width: 0; }
+.side { display: flex; flex-direction: column; gap: 16px; }
+
+.code-card { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.code-card + .code-card { margin-top: 12px; }
+.code-tab { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--sunken); }
+.code-tab .file { font-family: var(--f-mono); font-size: 0.78rem; font-weight: 600; overflow-wrap: anywhere; }
+pre.code { margin: 0; overflow-x: auto; font-family: var(--f-mono); font-variant-ligatures: none; font-size: 0.8rem; line-height: 1.65; padding: 8px 0; }
+.ln { display: block; padding: 0 14px 0 0; white-space: pre; border-left: 3px solid transparent; }
+.ln .n { display: inline-block; width: 3.4em; padding-right: 1em; text-align: right; color: var(--tok-com); user-select: none; }
+.ln.hl { background: var(--hl-bg); border-left-color: var(--hl-bar); }
+.ln.dim { opacity: .55; }
+.t-k { color: var(--tok-key); } .t-s { color: var(--tok-str); } .t-c { color: var(--tok-com); font-style: italic; } .t-n { color: var(--tok-num); }
+
+.panel { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.panel-title { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--sunken); display: flex; justify-content: space-between; gap: 8px; }
+
+/* fixture graph */
+.graph { padding: 14px; display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 6px; font-family: var(--f-mono); font-size: 0.75rem; }
+.node { border: 1px dashed var(--line); border-radius: 6px; padding: 6px 4px; text-align: center; color: var(--muted); transition: all .2s; }
+.node small { display: block; font-size: 0.65rem; opacity: .85; }
+.node.active { border: 1.5px solid var(--l-fixture); color: var(--l-fixture); background: color-mix(in srgb, var(--l-fixture) var(--tint), transparent); font-weight: 600; }
+.node.ready { border: 1px solid var(--l-fixture); color: var(--fg); }
+.node.torn { border-style: dashed; color: var(--muted); text-decoration: line-through; }
+.edge { color: var(--muted); text-align: center; }
+.graph .stacked { display: flex; flex-direction: column; gap: 6px; }
+
+/* mini browser */
+.browser { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.browser-bar { display: flex; gap: 8px; align-items: center; padding: 7px 10px; background: var(--sunken); border-bottom: 1px solid var(--line); }
+.browser-bar i { width: 9px; height: 9px; border-radius: 50%; background: var(--line); flex: none; }
+.browser-bar .url { flex: 1; min-width: 0; font-family: var(--f-mono); font-size: 0.72rem; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 2px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.viewport { padding: 14px 16px; min-height: 230px; font-size: 0.88rem; display: flex; flex-direction: column; gap: 10px; }
+.viewport .empty { margin: auto; color: var(--muted); font-family: var(--f-mono); font-size: 0.78rem; text-align: center; }
+.app-h1 { font-family: var(--f-display); font-weight: 700; font-size: 1.25rem; margin: 0; }
+.app-form { display: flex; gap: 6px; }
+.app-form .inp { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; font-size: 0.82rem; color: var(--muted); background: var(--bg); white-space: nowrap; overflow: hidden; }
+.app-form .inp.filled { color: var(--fg); }
+.app-form .btn { border: 1px solid var(--line); border-radius: 5px; padding: 4px 10px; font-size: 0.82rem; background: var(--sunken); color: var(--muted); }
+.app-form .btn.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.app-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.app-list li { display: flex; gap: 8px; align-items: center; padding: 3px 6px; border-radius: 4px; }
+.app-list li .box { width: 12px; height: 12px; border: 1.5px solid var(--muted); border-radius: 3px; flex: none; display: grid; place-items: center; font-size: 9px; line-height: 1; }
+.app-list li.done span { text-decoration: line-through; color: var(--muted); }
+.app-list li.new { background: color-mix(in srgb, var(--pass) 12%, transparent); }
+.app-foot { font-size: 0.78rem; color: var(--muted); }
+.probe { outline: 2px solid var(--l-page); outline-offset: 2px; border-radius: 4px; }
+.check { outline: 2px solid var(--pass); outline-offset: 2px; border-radius: 4px; }
+.tag-badge { font-family: var(--f-mono); font-size: 0.65rem; color: var(--l-page); }
+
+/* network / event log */
+.log { list-style: none; margin: 0; padding: 6px 0; font-family: var(--f-mono); font-size: 0.74rem; max-height: 260px; overflow-y: auto; }
+.log li { padding: 4px 12px; display: grid; grid-template-columns: 1.6em 1fr; gap: 6px; border-left: 3px solid transparent; color: var(--muted); }
+.log li.now { color: var(--fg); border-left-color: var(--c); background: color-mix(in srgb, var(--c) 7%, transparent); }
+.log li .k { color: var(--c); font-weight: 600; }
+.log li span { min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------- Linkage ---------- */
+.link-table td code { white-space: nowrap; }
+.link-table tbody tr { cursor: default; }
+.link-table tbody tr:hover td { background: color-mix(in srgb, var(--l-page) 6%, transparent); }
+.col-spec { color: var(--l-spec); } .col-page { color: var(--l-page); } .col-app { color: var(--l-app); }
+
+/* ---------- Compare ---------- */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tabs button { border: 0; background: none; padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; color: var(--muted); font-weight: 500; }
+.tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
+.compare { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.compare > * { min-width: 0; }
+.verdict { display: flex; flex-direction: column; gap: 12px; }
+.verdict ul { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 6px; }
+
+/* ---------- Commands ---------- */
+.cmds { display: flex; flex-direction: column; gap: 8px; }
+.cmd { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.cmd code { background: none; border: 0; padding: 0; font-size: 0.85rem; overflow-x: auto; white-space: nowrap; display: block; }
+.cmd p { grid-column: 1; color: var(--muted); font-size: 0.88rem; }
+.cmd button { grid-row: 1 / span 2; grid-column: 2; border: 1px solid var(--line); background: var(--sunken); border-radius: 6px; padding: 5px 10px; font-size: 0.8rem; cursor: pointer; }
+
+footer.note { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--line); padding-top: 16px; }
+
+@media (max-width: 920px) {
+  .layers, .panes, .compare { grid-template-columns: minmax(0, 1fr); }
+  .layer-detail { position: static; }
+}
+@media (max-width: 520px) {
+  .layer-detail dl { grid-template-columns: 1fr; gap: 2px; }
+  .layer-detail dd { margin-bottom: 8px; }
+  .graph { grid-template-columns: 1fr; }
+  .edge { transform: rotate(90deg); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+  <header class="hero col">
+    <p class="eyebrow">angular-playwright-demo · e2e/specs/todo-crud.spec.ts:4</p>
+    <h1>One Playwright test, followed from command to teardown</h1>
+    <p class="lede">What the <code>specs</code>, <code>fixtures</code> and <code>pages</code> folders are for, how they connect to each other and to the Angular <code>TodoComponent</code>, traced through a single test.</p>
+    <div class="testname"><span class="kw">test</span>(<span class="str">'adds a todo with the Add button'</span>, <span class="kw">async</span> ({ todoPage, api }) =&gt; { … })</div>
+  </header>
+
+  <!-- ===================== Is it standard ===================== -->
+  <section class="col" style="max-width: 980px">
+    <header>
+      <p class="eyebrow">Short answer first</p>
+      <h2>Is this folder layout standard?</h2>
+    </header>
+    <div class="prose">
+      <p>Partly. Playwright itself only needs <strong>spec files</strong>. Everything else here is a built-in Playwright feature (fixtures, network mocking) or a widely used pattern (page objects) that this project chose to organise into folders. The folder <em>names</em> are a convention, not a rule.</p>
+      <p>For a handful of tests, one spec file is fine. The layers start paying off when you have many tests touching the same screen: here, 19 tests × 3 browsers = 57 runs share one set of selectors and one fake backend.</p>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Piece</th><th>Here</th><th>Status</th><th>What Playwright actually cares about</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chip" data-layer="spec">spec</span></td><td><code>e2e/specs/*.spec.ts</code></td><td><span class="status req">Required</span></td><td>Files matching <code>*.spec.ts</code> / <code>*.test.ts</code> inside <code>testDir</code>. This is the only thing it looks for.</td></tr>
+          <tr><td><span class="chip" data-layer="config">config</span></td><td><code>playwright.config.ts</code></td><td><span class="status req">Expected</span></td><td>Optional on paper, but every real project has one: test folder, base URL, browsers, and the dev server to start.</td></tr>
+          <tr><td><span class="chip" data-layer="fixture">fixtures</span></td><td><code>e2e/fixtures/</code></td><td><span class="status feat">Built-in feature</span></td><td><code>test.extend()</code> is core Playwright. <code>page</code>, <code>browser</code> and <code>request</code> are themselves fixtures. Putting custom ones in a folder is your choice.</td></tr>
+          <tr><td><span class="chip" data-layer="page">page objects</span></td><td><code>e2e/pages/</code></td><td><span class="status conv">Recommended pattern</span></td><td>Nothing. The Playwright docs describe the Page Object Model as a good practice, but the runner doesn't know these classes exist.</td></tr>
+          <tr><td><span class="chip" data-layer="mock">mock API</span></td><td><code>fixtures/mock-todo-api.ts</code></td><td><span class="status feat">Built-in feature</span></td><td><code>page.route()</code> is core Playwright. Wrapping it in a class is this project's design.</td></tr>
+          <tr><td><span class="chip" data-layer="config">test data</span></td><td><code>e2e/data/</code></td><td><span class="status conv">Convention</span></td><td>Nothing. Plain TypeScript functions that build todo objects.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== Layers ===================== -->
+  <section>
+    <header class="col">
+      <p class="eyebrow">How the folders relate</p>
+      <h2>The layers, top to bottom</h2>
+      <p class="lede">Each one talks only to the one below it. The spec never contains a selector or a URL. The page object never decides test data. The mock never touches the DOM. Pick a layer to see its job.</p>
+    </header>
+    <div class="layers">
+      <div class="stack" id="layerStack" role="group" aria-label="Layers"></div>
+      <div class="layer-detail" id="layerDetail" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- ===================== Walkthrough ===================== -->
+  <section>
+    <header class="col">
+      <p class="eyebrow">Step through it</p>
+      <h2>What happens when “adds a todo with the Add button” runs</h2>
+      <p class="lede">Use Next / Previous or the ← → keys. The coloured stripe on each step shows which layer is doing the work; the yellow lines are the code running at that moment.</p>
+    </header>
+
+    <div class="stepper" id="stepper">
+      <div class="controls">
+        <div class="dots" id="dots" role="tablist" aria-label="Steps"></div>
+        <div class="nav">
+          <button id="prev" type="button">← Previous</button>
+          <button id="next" type="button" class="primary">Next →</button>
+        </div>
+      </div>
+
+      <div class="step-head" id="stepHead"></div>
+
+      <div class="panes">
+        <div id="codePane"></div>
+        <div class="side">
+          <div class="browser">
+            <div class="browser-bar"><i></i><i></i><i></i><div class="url" id="url">about:blank</div></div>
+            <div class="viewport" id="viewport"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title"><span>Fixtures for this test</span><span id="fixPhase">not started</span></div>
+            <div class="graph" id="graph">
+              <div class="stacked">
+                <div class="node" data-n="page">page<small>built-in</small></div>
+                <div class="node" data-n="initialTodos">initialTodos<small>option</small></div>
+              </div>
+              <div class="edge">→</div>
+              <div class="node" data-n="api">api<small>mock backend</small></div>
+              <div class="edge">→</div>
+              <div class="node" data-n="todoPage">todoPage<small>page object</small></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-title"><span>Event &amp; network log</span><span id="logCount"></span></div>
+            <ol class="log" id="log"></ol>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Linkage ===================== -->
+  <section>
+    <header class="col">
+      <p class="eyebrow">The link to the component</p>
+      <h2>How a line in the spec finds an element in the Angular template</h2>
+      <p class="lede">The connection is a string. The component puts <code>data-testid="todo-input"</code> on the element, the config tells Playwright that <code>getByTestId()</code> reads the <code>data-testid</code> attribute, and the page object asks for that id. Nothing imports Angular code.</p>
+    </header>
+    <div class="table-scroll">
+      <table class="link-table">
+        <thead><tr><th><span class="col-spec">Spec writes</span></th><th><span class="col-page">Page object resolves to</span></th><th><span class="col-app">Matches in todo.component.ts</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>todoPage.input</code></td><td><code>page.getByTestId('todo-input')</code></td><td><code>&lt;input data-testid="todo-input" [(ngModel)]="newTitle"&gt;</code></td></tr>
+          <tr><td><code>todoPage.addButton</code></td><td><code>page.getByTestId('add-button')</code></td><td><code>&lt;button data-testid="add-button" type="submit"&gt;</code></td></tr>
+          <tr><td><code>todoPage.items</code></td><td><code>page.getByTestId('todo-item')</code></td><td><code>&lt;li data-testid="todo-item"&gt;</code> (one per todo)</td></tr>
+          <tr><td><code>todoPage.itemAt(3).title</code></td><td><code>items.nth(3).getByTestId('todo-title')</code></td><td><code>&lt;span data-testid="todo-title"&gt;</code> inside the 4th <code>&lt;li&gt;</code></td></tr>
+          <tr><td><code>todoPage.expectRemaining(3)</code></td><td><code>getByTestId('remaining-count')</code> has text <code>"3 items left"</code></td><td><code>&lt;span data-testid="remaining-count"&gt;</code></td></tr>
+          <tr><td><code>todoPage.heading</code></td><td><code>page.getByRole('heading', { name: 'Todos' })</code></td><td><code>&lt;h1&gt;Todos&lt;/h1&gt;</code> (found by accessibility role, no test id)</td></tr>
+          <tr><td><code>api.requestsOf('POST')</code></td><td>not a locator: reads the mock's request list</td><td><code>TodoService.create()</code> → <code>http.post('/api/todos', { title })</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="col" style="color: var(--muted)">If someone renames <code>data-testid="todo-input"</code>, exactly one line in <code>todo.page.ts</code> changes, and all 19 tests keep working.</p>
+  </section>
+
+  <!-- ===================== Compare ===================== -->
+  <section>
+    <header class="col">
+      <p class="eyebrow">Why bother</p>
+      <h2>The same test, with and without the layers</h2>
+      <p class="lede">Both versions run the same checks against the same component. Switch tabs to compare.</p>
+    </header>
+    <div class="tabs" role="tablist" aria-label="Versions">
+      <button type="button" role="tab" id="tab-layered" aria-selected="true" aria-controls="comparePane">With fixtures + page object (this repo)</button>
+      <button type="button" role="tab" id="tab-raw" aria-selected="false" aria-controls="comparePane">Everything in one spec</button>
+    </div>
+    <div class="compare">
+      <div id="comparePane" role="tabpanel"></div>
+      <div class="verdict" id="verdict"></div>
+    </div>
+  </section>
+
+  <!-- ===================== Commands ===================== -->
+  <section class="col">
+    <header>
+      <p class="eyebrow">Try it</p>
+      <h2>Watch this exact test run</h2>
+    </header>
+    <div class="cmds">
+      <div class="cmd"><code>npx playwright test e2e/specs/todo-crud.spec.ts:4 --project=chromium --headed</code><p>Runs only the test on line 4, in a visible Chromium window.</p><button type="button" data-copy>Copy</button></div>
+      <div class="cmd"><code>npm run e2e:ui</code><p>UI mode: pick the test, then scrub through every action with DOM snapshots and network calls.</p><button type="button" data-copy>Copy</button></div>
+      <div class="cmd"><code>npx playwright test -g "adds a todo with the Add button" --project=chromium --debug</code><p>Opens the Inspector and pauses before each action so you can step through it.</p><button type="button" data-copy>Copy</button></div>
+      <div class="cmd"><code>npm run e2e:report</code><p>Opens the HTML report from the last run.</p><button type="button" data-copy>Copy</button></div>
+    </div>
+  </section>
+
+  <footer class="note col">Code excerpts and line numbers are taken from the project files as they are now. The fake todo created in the test gets id 1001 because <code>MockTodoApi</code> starts its id counter at 1000.</footer>
+</div>
+
+<script>
+/* ---------------- tiny TS/HTML highlighter ---------------- */
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const TOK = /(\/\/.*$|\/\*\*.*?\*\/)|('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`[^`\n]*`)|\b(import|from|export|default|const|let|async|await|return|new|class|extends|readonly|protected|private|override|void|if|case|switch|this|true|false|type|test|expect)\b|\b(\d+(?:_\d+)?)\b/g;
+function hi(line) {
+  let out = '', last = 0;
+  line.replace(TOK, (m, c, s, k, n, i) => {
+    out += esc(line.slice(last, i));
+    const cls = c ? 't-c' : s ? 't-s' : k ? 't-k' : 't-n';
+    out += `<span class="${cls}">${esc(m)}</span>`;
+    last = i + m.length;
+    return m;
+  });
+  return out + esc(line.slice(last));
+}
+function codeCard({ file, start, code, hl = [], layer }) {
+  const lines = code.replace(/^\n/, '').replace(/\n$/, '').split('\n');
+  const body = lines.map((l, i) => {
+    const n = start + i;
+    const isHl = hl.includes(n);
+    const cls = 'ln' + (isHl ? ' hl' : (hl.length ? ' dim' : ''));
+    return `<span class="${cls}"><span class="n">${n}</span>${hi(l) || ' '}</span>`;
+  }).join('');
+  return `<div class="code-card"><div class="code-tab"><span class="file">${esc(file)}</span><span class="chip" data-layer="${layer}">${LAYERS[layer].short}</span></div><pre class="code">${body}</pre></div>`;
+}
+
+/* ---------------- layers ---------------- */
+const LAYERS = {
+  config: { short: 'config', name: 'Config', path: 'playwright.config.ts',
+    job: 'Tells the runner where tests live, which URL the app is on, which browsers to use, and how to start the app.',
+    knows: '<code>testDir</code>, <code>baseURL</code>, <code>testIdAttribute: \'data-testid\'</code>, <code>webServer: ng serve</code>, 3 projects (chromium, firefox, mobile).',
+    never: 'Anything about todos.',
+    link: 'Read once before any test. Its <code>baseURL</code> is why <code>page.goto(\'/todos\')</code> works, and <code>testIdAttribute</code> is why <code>getByTestId()</code> matches <code>data-testid</code>.' },
+  spec: { short: 'spec', name: 'Spec', path: 'e2e/specs/todo-crud.spec.ts',
+    job: 'States behaviour in plain steps: add a todo, then check the list, the input, the counter and what the server received.',
+    knows: 'Business rules: adding clears the input, the counter goes from 2 to 3, the POST body is trimmed.',
+    never: 'Selectors, URLs, how the fake server works.',
+    link: 'Imports <code>test</code> from <code>../fixtures/test-fixtures</code> (not from <code>@playwright/test</code>), which is what makes <code>todoPage</code> and <code>api</code> available as arguments.' },
+  fixture: { short: 'fixture', name: 'Fixtures', path: 'e2e/fixtures/test-fixtures.ts',
+    job: 'Builds everything a test asks for, in the right order, and cleans up afterwards. Each test gets fresh copies.',
+    knows: 'That <code>api</code> needs <code>page</code> + <code>initialTodos</code>, and <code>todoPage</code> needs <code>api</code> (so the fake server exists before the page loads).',
+    never: 'What a test asserts.',
+    link: 'Creates <code>MockTodoApi</code> and <code>TodoPage</code> and hands them to the spec through <code>use()</code>.' },
+  page: { short: 'page object', name: 'Page objects', path: 'e2e/pages/todo.page.ts, base.page.ts, components/todo-item.component.ts',
+    job: 'Translates user intent ("add a todo") into browser actions (fill this input, click that button).',
+    knows: 'Every <code>data-testid</code> the component exposes, the URL path <code>/todos</code>, and what "page is ready" means.',
+    never: 'Test data or the backend.',
+    link: 'Its locators match attributes in <code>todo.component.ts</code>. This is the only layer that touches the component\'s markup.' },
+  mock: { short: 'mock api', name: 'Mock API', path: 'e2e/fixtures/mock-todo-api.ts',
+    job: 'A fake <code>/api/todos</code> server living inside the test. It answers the app\'s HTTP calls from an in-memory list and records every request.',
+    knows: 'The HTTP contract: GET returns the list, POST returns 201 with a new id, PATCH, DELETE.',
+    never: 'The DOM.',
+    link: 'Uses <code>page.route()</code>, so requests from the real Angular <code>HttpClient</code> are intercepted inside the browser before they reach the network. The <code>api/server.mjs</code> backend from <code>npm start</code> is never involved.' },
+  app: { short: 'angular app', name: 'Angular app (under test)', path: 'src/app/todo/todo.component.ts, todo.service.ts',
+    job: 'The real code being tested. It runs unchanged in a real browser, served by <code>ng serve</code>.',
+    knows: 'Nothing about Playwright. It only carries <code>data-testid</code> attributes as hooks.',
+    never: 'That it is being tested.',
+    link: 'Playwright reaches it two ways: through the DOM (page objects) and through the network (mock API).' },
+};
+const ORDER = ['config', 'spec', 'fixture', 'page', 'mock', 'app'];
+const ARROWS = { spec: 'uses ↓', fixture: 'builds ↓', page: 'drives ↓', mock: 'answers ↓', app: '' };
+const stack = document.getElementById('layerStack');
+const detail = document.getElementById('layerDetail');
+stack.innerHTML = ORDER.map((k, i) =>
+  `<button type="button" class="layer-btn" data-layer="${k}" data-key="${k}" aria-pressed="false"><b>${LAYERS[k].name}</b><span class="path">${LAYERS[k].path}</span><span class="arrow">${ARROWS[k] || ''}</span></button>`
+).join('');
+function showLayer(k) {
+  const L = LAYERS[k];
+  stack.querySelectorAll('.layer-btn').forEach(b => b.setAttribute('aria-pressed', b.dataset.key === k));
+  detail.dataset.layer = k;
+  detail.innerHTML = `<span class="chip" data-layer="${k}">${L.short}</span><h3 style="font-weight:700;font-size:1.3rem">${L.name}</h3>
+    <dl><dt>Its job</dt><dd>${L.job}</dd><dt>Knows about</dt><dd>${L.knows}</dd><dt>Never knows</dt><dd>${L.never}</dd><dt>Connects by</dt><dd>${L.link}</dd></dl>`;
+}
+stack.addEventListener('click', e => { const b = e.target.closest('.layer-btn'); if (b) showLayer(b.dataset.key); });
+showLayer('spec');
+
+/* ---------------- code excerpts (from the repo) ---------------- */
+const SRC = {
+  config: { file: 'playwright.config.ts', start: 6, layer: 'config', code: `
+export default defineConfig({
+  testDir: './e2e/specs',
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 2 : undefined,
+  reporter: [['list'], ['html', { open: 'never' }]],
+
+  use: {
+    baseURL: BASE_URL,
+    testIdAttribute: 'data-testid', // page.getByTestId() reads this attribute
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+  },
+
+  // Playwright starts the Angular dev server before any test runs
+  // and reuses one that is already running locally.
+  webServer: {
+    command: \`npx ng serve --port \${PORT}\`,
+    url: BASE_URL,
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
+  },
+
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'mobile', use: { ...devices['Pixel 7'] } },
+  ],
+});` },
+  spec: { file: 'e2e/specs/todo-crud.spec.ts', start: 1, layer: 'spec', code: `
+import { test, expect } from '../fixtures/test-fixtures';
+
+test.describe('Todo component – add / toggle / delete', () => {
+  test('adds a todo with the Add button', async ({ todoPage, api }) => {
+    await todoPage.addTodo('Ship release');
+
+    // UI updated
+    await expect(todoPage.items).toHaveCount(4);
+    await expect(todoPage.itemAt(3).title).toHaveText('Ship release');
+    await expect(todoPage.input).toHaveValue(''); // input cleared
+    await todoPage.expectRemaining(3);
+
+    // Backend received the right payload
+    expect(api.requestsOf('POST')).toHaveLength(1);
+    expect(api.requestsOf('POST')[0].body).toEqual({ title: 'Ship release' });
+  });` },
+  fixtures: { file: 'e2e/fixtures/test-fixtures.ts', start: 26, layer: 'fixture', code: `
+export const test = base.extend<TodoFixtures>({
+  // An "option" fixture: a plain value with a default, overridable via test.use().
+  initialTodos: [sampleTodos(), { option: true }],
+
+  api: async ({ page, initialTodos }, use) => {
+    // ── setup ──
+    const api = new MockTodoApi(page);
+    api.seed(initialTodos);
+    await api.install();
+
+    await use(api); // ── the test body runs here ──
+
+    // ── teardown ──
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+  },
+
+  todoPage: async ({ page, api }, use) => {
+    // Depends on \`api\`, so the interceptor is guaranteed to exist before goto().
+    void api;
+    const todoPage = new TodoPage(page);
+    await todoPage.goto();
+    await use(todoPage);
+  },` },
+  factory: { file: 'e2e/data/todo.factory.ts', start: 22, layer: 'fixture', code: `
+/** A ready-made mixed list used by several specs. */
+export const sampleTodos = (): TodoDto[] => [
+  buildTodo({ id: 101, title: 'Buy milk', completed: false }),
+  buildTodo({ id: 102, title: 'Write Playwright tests', completed: true }),
+  buildTodo({ id: 103, title: 'Review PR', completed: false }),
+];` },
+  install: { file: 'e2e/fixtures/mock-todo-api.ts', start: 29, layer: 'mock', code: `
+  /** Attach the network interceptor. Must run BEFORE page.goto(). */
+  async install(): Promise<void> {
+    await this.page.route(/\\/api\\/todos(\\/\\d+)?(\\?.*)?$/, route => this.handle(route));
+  }` },
+  base: { file: 'e2e/pages/base.page.ts', start: 12, layer: 'page', code: `
+  async goto(): Promise<void> {
+    await this.page.goto(this.path);
+    await this.waitUntilReady();
+  }` },
+  oninit: { file: 'src/app/todo/todo.component.ts', start: 96, layer: 'app', code: `
+  ngOnInit(): void {
+    this.api.list().subscribe({
+      next: todos => {
+        this.todos.set(todos);
+        this.loading.set(false);
+      },` },
+  handleGet: { file: 'e2e/fixtures/mock-todo-api.ts', start: 64, layer: 'mock', code: `
+  private async handle(route: Route): Promise<void> {
+    const req = route.request();
+    const method = req.method() as Method;
+    this.requests.push({ method, url: req.url(), body: this.body(req) });
+
+    if (this.delayMs) await new Promise(r => setTimeout(r, this.delayMs));
+
+    const failIdx = this.failures.findIndex(f => f.method === method);
+    if (failIdx >= 0) {
+      const [f] = this.failures.splice(failIdx, 1);
+      return route.fulfill({ status: f.status, json: { message: 'Simulated failure' } });
+    }
+
+    const id = this.idFrom(req.url());
+
+    switch (method) {
+      case 'GET':
+        return route.fulfill({ json: this.all() });` },
+  ready: { file: 'e2e/pages/todo.page.ts', start: 41, layer: 'page', code: `
+  /** The page is "ready" once the loading indicator has gone. */
+  protected override async waitUntilReady(): Promise<void> {
+    await expect(this.heading).toBeVisible();
+    await expect(this.loading).toBeHidden();
+  }` },
+  pageCtor: { file: 'e2e/pages/todo.page.ts', start: 28, layer: 'page', code: `
+  constructor(page: Page) {
+    super(page);
+    this.heading = page.getByRole('heading', { name: 'Todos' });
+    this.input = page.getByTestId('todo-input');
+    this.addButton = page.getByTestId('add-button');
+    this.list = page.getByTestId('todo-list');
+    this.items = page.getByTestId('todo-item');` },
+  addTodo: { file: 'e2e/pages/todo.page.ts', start: 49, layer: 'page', code: `
+  async addTodo(title: string): Promise<void> {
+    await this.input.fill(title);
+    await this.addButton.click();
+  }` },
+  template: { file: 'src/app/todo/todo.component.ts (template)', start: 20, layer: 'app', code: `
+      <form data-testid="todo-form" (ngSubmit)="add()">
+        <input
+          data-testid="todo-input"
+          name="title"
+          placeholder="What needs to be done?"
+          [(ngModel)]="newTitle"
+          maxlength="100"
+        />
+        <button data-testid="add-button" type="submit" [disabled]="!canAdd()">Add</button>
+      </form>` },
+  add: { file: 'src/app/todo/todo.component.ts', start: 109, layer: 'app', code: `
+  add(): void {
+    const title = this.newTitle.trim();
+    if (!title) return;
+    this.api.create(title).subscribe({
+      next: created => {
+        this.todos.update(list => [...list, created]);
+        this.newTitle = '';
+        this.error.set(null);` },
+  service: { file: 'src/app/todo/todo.service.ts', start: 24, layer: 'app', code: `
+  create(title: string): Observable<Todo> {
+    return this.http.post<Todo>(this.baseUrl, { title });
+  }` },
+  handlePost: { file: 'e2e/fixtures/mock-todo-api.ts', start: 83, layer: 'mock', code: `
+      case 'POST': {
+        const { title } = this.body(req) as { title: string };
+        const todo: TodoDto = { id: ++this.idSeq, title, completed: false };
+        this.store.set(todo.id, todo);
+        return route.fulfill({ status: 201, json: todo });
+      }` },
+  requestsOf: { file: 'e2e/fixtures/mock-todo-api.ts', start: 58, layer: 'mock', code: `
+  requestsOf(method: Method) {
+    return this.requests.filter(r => r.method === method);
+  }` },
+};
+const S = (key, hl) => ({ ...SRC[key], hl });
+
+/* ---------------- steps ---------------- */
+const STEPS = [
+  { layer: 'config', title: 'You run npx playwright test',
+    body: [
+      'Playwright reads <code>playwright.config.ts</code> first. It finds 4 spec files under <code>testDir</code>, sees 3 projects (chromium, firefox, mobile), and plans 19 tests × 3 = 57 runs.',
+      'Before any test, <code>webServer</code> runs <code>npx ng serve --port 4200</code> and waits until <code>http://localhost:4200</code> answers. If you already have the app running, it reuses it.',
+      '<span class="aside">Every test then runs in each project. This walkthrough follows the chromium run.</span>'],
+    code: [S('config', [7, 15, 16, 24, 25, 26, 31, 32, 33, 34, 35])],
+    browser: 'none', url: '', fix: {}, phase: 'not started',
+    log: [['config', 'loaded playwright.config.ts → 4 spec files, 3 projects'], ['config', 'webServer: npx ng serve --port 4200 … ready on :4200']] },
+
+  { layer: 'spec', title: 'The test asks for todoPage and api',
+    body: [
+      'Line 1 imports <code>test</code> from <code>../fixtures/test-fixtures</code>, not from <code>@playwright/test</code>. That custom <code>test</code> knows about extra fixtures.',
+      'On line 4, <code>async ({ todoPage, api }) =&gt;</code> looks like normal destructuring, but Playwright reads those names before running anything. Each name is a request: "build me a <code>todoPage</code> and an <code>api</code>". Fixtures you don\'t name are never created.',
+      'Nothing has run yet. Playwright now works out what those two fixtures depend on (the diagram on the right).'],
+    code: [S('spec', [1, 4])],
+    browser: 'none', url: '', fix: { page: 'idle', initialTodos: 'idle', api: 'idle', todoPage: 'idle' }, phase: 'resolving',
+    log: [['spec', 'test needs → todoPage, api'], ['fixture', 'dependency order: page, initialTodos → api → todoPage']] },
+
+  { layer: 'fixture', title: 'page: a fresh, isolated browser tab',
+    body: [
+      '<code>page</code> is Playwright\'s own built-in fixture. For every test it opens a new browser context (like a brand new incognito window) and a tab inside it.',
+      'Cookies, localStorage and routes from other tests can\'t leak in. That\'s why tests can run in parallel with <code>fullyParallel: true</code>.'],
+    code: [S('fixtures', [30])],
+    browser: 'blank', url: 'about:blank', fix: { page: 'active' }, phase: 'setup',
+    log: [['fixture', 'page ✓ new context + tab (chromium)']] },
+
+  { layer: 'fixture', title: 'initialTodos: the data the fake server starts with',
+    body: [
+      '<code>initialTodos</code> is an <em>option</em> fixture: a plain value with a default. The default comes from <code>sampleTodos()</code> in <code>e2e/data/todo.factory.ts</code>: 3 todos, 1 of them completed.',
+      'A test file can swap it with <code>test.use({ initialTodos: [] })</code>, which is how the "empty list" tests work without touching the fixture code.'],
+    code: [S('fixtures', [28]), S('factory', [24, 25, 26])],
+    browser: 'blank', url: 'about:blank', fix: { page: 'ready', initialTodos: 'active' }, phase: 'setup',
+    log: [['fixture', 'initialTodos ✓ [101 Buy milk, 102 Write Playwright tests ✔, 103 Review PR]']] },
+
+  { layer: 'mock', title: 'api: the fake backend is plugged into the tab',
+    body: [
+      'The <code>api</code> fixture creates <code>MockTodoApi</code>, loads it with the 3 todos, and calls <code>install()</code>, which registers <code>page.route()</code> for any URL matching <code>/api/todos</code>.',
+      'From now on, when the Angular app in this tab makes an HTTP call to <code>/api/todos</code>, the request stops inside the browser and <code>MockTodoApi.handle()</code> decides the response. No real server is needed.',
+      'Then it hits <code>await use(api)</code> and pauses. Everything after <code>use()</code> (line 39) is teardown and runs when the test finishes.'],
+    code: [S('fixtures', [32, 33, 34, 36]), S('install', [31])],
+    browser: 'blank', url: 'about:blank', fix: { page: 'ready', initialTodos: 'ready', api: 'active' }, phase: 'setup',
+    log: [['mock', 'page.route(/\\/api\\/todos…/) installed'], ['mock', 'store seeded with 3 todos']] },
+
+  { layer: 'page', title: 'todoPage: navigate to /todos',
+    body: [
+      '<code>todoPage</code> depends on <code>api</code> (line 42), so it is guaranteed to run after the interceptor exists. Without that ordering, the app\'s first GET could reach the network before the mock is ready.',
+      'It creates a <code>TodoPage</code> and calls <code>goto()</code>, inherited from <code>BasePage</code>. <code>page.goto(\'/todos\')</code> is combined with <code>baseURL</code> from the config, giving <code>http://localhost:4200/todos</code>.',
+      'That page request is <em>not</em> mocked (it doesn\'t match <code>/api/todos</code>), so the real <code>ng serve</code> sends Angular\'s HTML and JavaScript.'],
+    code: [S('fixtures', [42, 44, 45, 46]), S('base', [13])],
+    browser: 'loading', url: 'localhost:4200/todos', fix: { page: 'ready', initialTodos: 'ready', api: 'ready', todoPage: 'active' }, phase: 'setup',
+    log: [['page', 'page.goto("/todos") → http://localhost:4200/todos'], ['app', 'GET /todos → 200 from ng serve (real)']] },
+
+  { layer: 'app', title: 'Angular boots and asks for the todo list',
+    body: [
+      'The router maps <code>/todos</code> to <code>TodoComponent</code>. Its <code>ngOnInit</code> calls <code>TodoService.list()</code>, which does <code>HttpClient.get(\'/api/todos\')</code>. While that\'s pending, the template shows "Loading…".',
+      'The GET matches the route from the previous step, so <code>MockTodoApi.handle()</code> records it and answers with the 3 seeded todos. Angular sets the <code>todos</code> signal and renders the list.',
+      '<span class="aside">This is real Angular code: component, signals, HttpClient and router all run unchanged. Only the server is fake.</span>'],
+    code: [S('oninit', [97, 99, 100]), S('handleGet', [67, 80, 81])],
+    browser: 'list', url: 'localhost:4200/todos', fix: { page: 'ready', initialTodos: 'ready', api: 'ready', todoPage: 'active' }, phase: 'setup',
+    log: [['app', 'GET /api/todos'], ['mock', '↳ intercepted → handle() → 200 [3 todos]'], ['app', 'list rendered: 3 items, "2 items left"']] },
+
+  { layer: 'page', title: 'waitUntilReady: wait until the list is on screen',
+    body: [
+      '<code>goto()</code> doesn\'t return until <code>waitUntilReady()</code> passes: the "Todos" heading is visible and the loading indicator is gone. These are retrying assertions, so they keep checking (up to 5 s) instead of failing on the first look.',
+      'Now the <code>todoPage</code> fixture reaches <code>await use(todoPage)</code>. All fixtures are ready, and Playwright calls the test function with <code>{ todoPage, api }</code>.'],
+    code: [S('ready', [43, 44]), S('fixtures', [47])],
+    browser: 'list', probe: ['h1'], url: 'localhost:4200/todos', fix: { page: 'ready', initialTodos: 'ready', api: 'ready', todoPage: 'ready' }, phase: 'test body',
+    log: [['page', 'heading "Todos" visible ✓, loading hidden ✓'], ['spec', '▶ test body starts']] },
+
+  { layer: 'page', title: 'addTodo("Ship release"): type into the input',
+    body: [
+      'The spec\'s first line calls <code>todoPage.addTodo(\'Ship release\')</code>. The spec says <em>what</em> the user does; the page object knows <em>how</em>.',
+      '<code>this.input</code> was created in the constructor as <code>page.getByTestId(\'todo-input\')</code>. A locator is just a description, so the element is looked up now, when <code>fill()</code> runs. It finds <code>&lt;input data-testid="todo-input"&gt;</code> in the component template.',
+      'Before typing, Playwright auto-waits until the input is visible, enabled and editable. Typing updates <code>newTitle</code> through <code>[(ngModel)]</code>, so <code>canAdd()</code> becomes true and the Add button is enabled.'],
+    code: [S('spec', [5]), S('addTodo', [50]), S('pageCtor', [31]), S('template', [22, 25, 28])],
+    browser: 'typed', probe: ['input'], url: 'localhost:4200/todos', fix: { page: 'ready', initialTodos: 'ready', api: 'ready', todoPage: 'ready' }, phase: 'test body',
+    log: [['page', 'locator getByTestId("todo-input") → 1 element'], ['page', 'fill("Ship release")'], ['app', 'newTitle = "Ship release" → Add button enabled']] },
+
+  { layer: 'app', title: 'Click Add: Angular sends a POST, the mock answers',
+    body: [
+      '<code>this.addButton.click()</code> waits for <code>&lt;button data-testid="add-button"&gt;</code> to be enabled, then clicks it. The form\'s <code>(ngSubmit)</code> calls <code>add()</code>, which trims the text and calls <code>TodoService.create()</code>.',
+      'That sends <code>POST /api/todos</code> with body <code>{"title":"Ship release"}</code>. The route intercepts it; <code>handle()</code> records the request, then the POST branch adds a todo with id 1001 and replies 201.',
+      'Angular appends the new todo to the <code>todos</code> signal and clears <code>newTitle</code>. A 4th row appears and the input empties.'],
+    code: [S('addTodo', [51]), S('add', [110, 112, 114, 115]), S('service', [25]), S('handlePost', [84, 85, 86, 87])],
+    browser: 'added', probe: ['btn'], url: 'localhost:4200/todos', fix: { page: 'ready', initialTodos: 'ready', api: 'ready', todoPage: 'ready' }, phase: 'test body',
+    log: [['page', 'click getByTestId("add-button")'], ['app', 'POST /api/todos {"title":"Ship release"}'], ['mock', '↳ intercepted → recorded → 201 {id:1001, …}'], ['app', 'row 4 rendered, input cleared, "3 items left"']] },
+
+  { layer: 'spec', title: 'Check what the user sees',
+    body: [
+      'These are <em>web-first assertions</em>: <code>await expect(locator).toHaveCount(4)</code> re-queries the page until it passes or 5 s run out. You never add sleeps to wait for Angular to re-render.',
+      '<code>itemAt(3).title</code> is a page-object helper that scopes to the 4th <code>&lt;li data-testid="todo-item"&gt;</code> and then its <code>todo-title</code> span. <code>expectRemaining(3)</code> wraps the footer text check so several specs can reuse it.'],
+    code: [S('spec', [8, 9, 10, 11])],
+    browser: 'added', check: ['rows', 'row4', 'input', 'foot'], url: 'localhost:4200/todos', fix: { page: 'ready', initialTodos: 'ready', api: 'ready', todoPage: 'ready' }, phase: 'test body',
+    log: [['spec', '✓ todo-item count = 4'], ['spec', '✓ row 4 title = "Ship release"'], ['spec', '✓ todo-input value = ""'], ['spec', '✓ remaining-count = "3 items left"']] },
+
+  { layer: 'mock', title: 'Check what the server received',
+    body: [
+      'The UI could look right even if the app sent the wrong data, so the test also inspects the fake server. Every request passed through <code>handle()</code>, which pushed it onto <code>requests</code>.',
+      '<code>api.requestsOf(\'POST\')</code> filters that list: exactly one POST, with body <code>{ title: \'Ship release\' }</code>.',
+      '<span class="aside">No <code>await</code> here: this is plain data already in memory, not something on the page that might still be changing.</span>'],
+    code: [S('spec', [14, 15]), S('requestsOf', [59])],
+    browser: 'added', url: 'localhost:4200/todos', fix: { page: 'ready', initialTodos: 'ready', api: 'ready', todoPage: 'ready' }, phase: 'test body',
+    log: [['mock', 'requests: [GET /api/todos, POST /api/todos]'], ['spec', '✓ 1 POST, body = {"title":"Ship release"}'], ['spec', '■ test body done: passed']] },
+
+  { layer: 'fixture', title: 'Teardown, in reverse order',
+    body: [
+      'Each fixture resumes after its <code>use()</code>. <code>todoPage</code> has nothing to clean up. <code>api</code> runs <code>page.unrouteAll()</code>. Finally Playwright closes the tab and its browser context.',
+      'Nothing survives into the next test: the next one gets a new tab, a new <code>MockTodoApi</code> with the original 3 todos, and a fresh load of the app. The same steps then repeat for this test in firefox and on the mobile (Pixel 7) project.'],
+    code: [S('fixtures', [36, 38, 39])],
+    browser: 'closed', url: '', fix: { page: 'torn', initialTodos: 'torn', api: 'torn', todoPage: 'torn' }, phase: 'teardown',
+    log: [['fixture', 'todoPage: nothing to clean up'], ['fixture', 'api: page.unrouteAll()'], ['fixture', 'page: context closed'], ['spec', '✓ adds a todo with the Add button (chromium)']] },
+];
+
+/* ---------------- render stepper ---------------- */
+const $ = id => document.getElementById(id);
+let cur = 0;
+$('dots').innerHTML = STEPS.map((s, i) =>
+  `<button type="button" class="dot" role="tab" data-layer="${s.layer}" data-i="${i}" aria-label="Step ${i + 1}: ${esc(s.title)}" title="${esc(s.title)}">${i + 1}</button>`).join('');
+
+const TODOS = [['Buy milk', false], ['Write Playwright tests', true], ['Review PR', false]];
+function renderBrowser(st) {
+  const vp = $('viewport');
+  $('url').textContent = st.url || 'about:blank';
+  if (st.browser === 'none') { vp.innerHTML = '<p class="empty">No browser yet.<br>ng serve is starting.</p>'; return; }
+  if (st.browser === 'blank') { vp.innerHTML = '<p class="empty">Empty tab<br>(nothing loaded yet)</p>'; return; }
+  if (st.browser === 'closed') { vp.innerHTML = '<p class="empty">Tab and context closed.</p>'; return; }
+  const P = new Set(st.probe || []), C = new Set(st.check || []);
+  const mark = k => (P.has(k) ? ' probe' : '') + (C.has(k) ? ' check' : '');
+  const typed = st.browser === 'typed';
+  const added = st.browser === 'added';
+  const rows = st.browser === 'loading' ? '' :
+    (added ? [...TODOS, ['Ship release', false]] : TODOS).map(([t, d], i) =>
+      `<li class="${d ? 'done' : ''}${added && i === 3 ? ' new' : ''}${i === 3 ? mark('row4') : ''}"><span class="box">${d ? '✓' : ''}</span><span>${t}</span></li>`).join('');
+  const left = added ? 3 : 2;
+  vp.innerHTML = `
+    <p class="app-h1${mark('h1')}">Todos</p>
+    <div class="app-form">
+      <div class="inp${typed ? ' filled' : ''}${mark('input')}">${typed ? 'Ship release' : 'What needs to be done?'}</div>
+      <div class="btn${typed ? ' on' : ''}${mark('btn')}">Add</div>
+    </div>
+    ${st.browser === 'loading' ? '<p style="color:var(--muted)">Loading…</p>' :
+      `<ul class="app-list${mark('rows')}">${rows}</ul><div class="app-foot${mark('foot')}">${left} items left · all · active · completed</div>`}
+    ${P.size ? '<span class="tag-badge">orange outline = element the locator found</span>' : ''}
+    ${C.size ? '<span class="tag-badge" style="color:var(--pass)">green outline = element an assertion checked</span>' : ''}`;
+}
+function render() {
+  const st = STEPS[cur];
+  document.querySelectorAll('.dot').forEach((d, i) => {
+    d.classList.toggle('done', i < cur);
+    if (i === cur) d.setAttribute('aria-current', 'step'); else d.removeAttribute('aria-current');
+    d.setAttribute('aria-selected', i === cur);
+  });
+  const head = $('stepHead');
+  head.dataset.layer = st.layer;
+  head.innerHTML = `<div class="meta"><span class="count">Step ${cur + 1} of ${STEPS.length}</span><span class="chip" data-layer="${st.layer}">${LAYERS[st.layer].short}</span></div>
+    <h3>${esc(st.title)}</h3><div class="step-body">${st.body.map(p => `<p>${p}</p>`).join('')}</div>`;
+  $('codePane').innerHTML = st.code.map(codeCard).join('');
+  renderBrowser(st);
+  document.querySelectorAll('#graph .node').forEach(n => {
+    n.className = 'node' + (st.fix[n.dataset.n] && st.fix[n.dataset.n] !== 'idle' ? ' ' + st.fix[n.dataset.n] : '');
+  });
+  $('fixPhase').textContent = st.phase;
+  const entries = [];
+  STEPS.slice(0, cur + 1).forEach((s, i) => s.log.forEach(([l, t]) => entries.push({ l, t, now: i === cur })));
+  $('log').innerHTML = entries.map(e => `<li data-layer="${e.l}" class="${e.now ? 'now' : ''}"><span class="k">${e.now ? '●' : '·'}</span><span>${esc(e.t)}</span></li>`).join('');
+  $('logCount').textContent = entries.length + ' events';
+  const log = $('log'); log.scrollTop = log.scrollHeight;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === STEPS.length - 1;
+  try { localStorage.setItem('pw-flow-step', String(cur)); } catch (e) {}
+}
+function go(i) { cur = Math.max(0, Math.min(STEPS.length - 1, i)); render(); }
+$('prev').addEventListener('click', () => go(cur - 1));
+$('next').addEventListener('click', () => go(cur + 1));
+$('dots').addEventListener('click', e => { const d = e.target.closest('.dot'); if (d) go(+d.dataset.i); });
+document.addEventListener('keydown', e => {
+  if (e.target.closest('input, textarea')) return;
+  if (e.key === 'ArrowRight') go(cur + 1);
+  if (e.key === 'ArrowLeft') go(cur - 1);
+});
+try { const saved = +localStorage.getItem('pw-flow-step'); if (saved > 0 && saved < STEPS.length) cur = saved; } catch (e) {}
+render();
+
+/* ---------------- compare ---------------- */
+const RAW = { file: 'e2e/specs/add-todo.raw.spec.ts (hypothetical)', start: 1, layer: 'spec', hl: [], code: `
+import { test, expect } from '@playwright/test';
+
+test('adds a todo with the Add button', async ({ page }) => {
+  // fake backend, inline
+  const posts: unknown[] = [];
+  await page.route('**/api/todos', async route => {
+    if (route.request().method() === 'GET') {
+      return route.fulfill({ json: [
+        { id: 101, title: 'Buy milk', completed: false },
+        { id: 102, title: 'Write Playwright tests', completed: true },
+        { id: 103, title: 'Review PR', completed: false },
+      ] });
+    }
+    posts.push(route.request().postDataJSON());
+    return route.fulfill({ status: 201, json: { id: 1001, title: 'Ship release', completed: false } });
+  });
+
+  // open the page and wait for it
+  await page.goto('/todos');
+  await expect(page.getByTestId('loading')).toBeHidden();
+
+  // act
+  await page.getByTestId('todo-input').fill('Ship release');
+  await page.getByTestId('add-button').click();
+
+  // assert
+  await expect(page.getByTestId('todo-item')).toHaveCount(4);
+  await expect(page.getByTestId('todo-title').nth(3)).toHaveText('Ship release');
+  await expect(page.getByTestId('todo-input')).toHaveValue('');
+  await expect(page.getByTestId('remaining-count')).toHaveText('3 items left');
+  expect(posts).toEqual([{ title: 'Ship release' }]);
+});` };
+const VERDICTS = {
+  layered: `<h3 style="font-weight:700">With the layers</h3><ul>
+    <li>The test is 11 lines of behaviour. Setup is one word in the argument list.</li>
+    <li>Selectors live in one place (<code>todo.page.ts</code>), shared by all 19 tests.</li>
+    <li>The fake backend handles GET, POST, PATCH and DELETE, plus <code>failNext()</code> and <code>withDelay()</code>, for every test.</li>
+    <li>Cost: you have to open 3–4 files to see everything that happens, which is why this page exists.</li></ul>`,
+  raw: `<h3 style="font-weight:700">All in one spec</h3><ul>
+    <li>Easy to read top to bottom; perfectly fine for a few tests or a quick prototype.</li>
+    <li>Every other test repeats the route setup, the <code>goto</code> + wait, and the selectors.</li>
+    <li>Rename <code>data-testid="todo-input"</code> and you edit every spec that types a todo.</li>
+    <li>A common path: start like this, then pull repeated parts into page objects and fixtures once you notice the copying.</li></ul>`,
+};
+function showCompare(which) {
+  $('tab-layered').setAttribute('aria-selected', which === 'layered');
+  $('tab-raw').setAttribute('aria-selected', which === 'raw');
+  $('comparePane').innerHTML = which === 'raw' ? codeCard(RAW) : codeCard({ ...SRC.spec, hl: [] });
+  $('verdict').innerHTML = VERDICTS[which];
+}
+$('tab-layered').addEventListener('click', () => showCompare('layered'));
+$('tab-raw').addEventListener('click', () => showCompare('raw'));
+showCompare('layered');
+
+/* ---------------- copy buttons ---------------- */
+document.querySelectorAll('[data-copy]').forEach(btn => btn.addEventListener('click', () => {
+  const code = btn.parentElement.querySelector('code');
+  const done = () => { btn.textContent = 'Copied'; setTimeout(() => (btn.textContent = 'Copy'), 1500); };
+  navigator.clipboard?.writeText(code.textContent).then(done, () => {
+    const r = document.createRange(); r.selectNodeContents(code);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = 'Selected';
+  }) ?? (() => { const r = document.createRange(); r.selectNodeContents(code); getSelection().removeAllRanges(); getSelection().addRange(r); })();
+}));
+</script>
+
+</html>
